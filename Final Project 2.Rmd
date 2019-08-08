@@ -1,0 +1,417 @@
+---
+title: "Final Project 2"
+author: "Satmeer Bains"
+date: "8/7/2018"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("tidyverse")
+library(tidyverse)
+df <- read.table("~/Documents/Cornell/Course Work/Summer 2018 Courses/Data Mining/Final Project/arrhythmia.data", sep = ",")
+
+```
+
+Data Cleaning
+```{r, echo=FALSE}
+df[df == "?"] <- NA
+ 
+# Removing V14 due to amount of missing variables
+df = subset(df, select = -c(V14))
+
+# Complete Case Analysis
+df<-df[complete.cases(df),]
+
+
+df$V11<- as.integer(as.factor(df$V11))
+df$V12<- as.integer(as.factor(df$V12))
+df$V13<- as.integer(as.factor(df$V13))
+df$V15<- as.integer(as.factor(df$V15))
+df$V280 = as.factor(df$V280)
+```
+
+
+Seperating into Training and Test datasets
+```{r, echo=FALSE}
+Classes = df$V280
+Classes = as.data.frame(Classes)
+# Recode the outcome variable:
+df$V280 <- ifelse(df$V280==1, 0,1)
+Classes <- ifelse(Classes==1, 0,1)
+
+##divide the data into test and training:
+set.seed(132421)
+test_index = sample(nrow(df), 200)
+Train <- df[-test_index,]
+Test <- df[test_index,]
+
+Test_Class=Classes[test_index,]
+Train_Class=Classes[-test_index,]
+```
+
+Logistic Regression
+# Since this is a classification problem, I decided to start with fitting a logistic regression model using the glm function. However, when I fit all predictors to the model, I found that many variables yielded NA values, indicating collinearity, so I excluded them from the model (each time more variables yielded NA values).
+```{r, echo=FALSE}
+##Run a logistic regression with all variables in the training data
+summary(logistic.train <- glm(V280 ~.-(V20+V22+V26+V36+V38+V60+V62+V63+V68+V70+V72+V74+V75+V80+V84+V85+V109+V119+V120+V121+V132+V133+V140+V142+V143+V147+V144+V145+V146+V151+V152+V154+V155+V156+V157+V158+V159+V164+V165+V175+V185+V195+V205+V215+V225+V235+V245+V255+V264+V265+V274+V275), data=Train, family="binomial"),maxit = 100)
+ ## All variables that resulted in NA values were considered to have collinearity with the independent variable and was thus removed from the model
+
+test_pred_logistic_class <- predict(logistic.train, Test, type="response")
+test_pred_logistic_class <- ifelse(test_pred_logistic_class >0.5, 1, 0)
+
+##Get the misclassification rate:
+Log.Reg1 = mean(Test_Class != test_pred_logistic_class)
+Log.Reg1
+```
+# The prediction error is about 0.48. Since the logisitic regression on the training data resulted in all P-values of 1, we would not consider this an effective method in determinining outcome of having an arrythmia. Thus, in my opinion, this model should not be included in the final analysis. 
+
+Logistic Regression Choosing the 100 best predictors first
+# Since so many variables are have collinearity with the response variable, we can choose the best 100 predictors and refit the model.
+
+```{r}
+PickBest <- function(X,p) {
+  # Pick variables with highest correlation to response
+  correlations = c()
+  for (i in 1:p) {
+    correlations = c(correlations,cor(df[,i],df$V280))
+  }
+  sorted = sort(correlations,index.return=T,decreasing=T)
+  sorted$ix[1:100]
+}
+PickBest(df, p=ncol(df)-1)
+
+# Doing Logistic Regression using the best 100 predictors
+
+RightCV <- function(X,n,p) {
+  order = sample(1:n)
+  errors = c()
+  for (i in 1:10) {
+    test = ((1:n)<=i*n/10) & ((1:n)>(i-1)*n/10)
+    train = !test
+    # Pick best 100
+    best100 = PickBest(X[order[train],],p)
+    # Fit model to best predictors
+    glm.fit = glm(V280~.,data=X[order[train],c(best100,p+1)],family=binomial)
+    glm.pred = predict(glm.fit,newdata=X[order[test],c(best100,p+1)],type="response")
+    glm.pred = glm.pred>0.5
+    errors = c(errors,mean(glm.pred!=X[order[test],"V280"]))
+  }
+  mean(errors)
+}
+
+Log.Reg2 = RightCV(df, n=nrow(df), p=ncol(df)-1)
+Log.Reg2
+```
+Choosing the 100 best predictors out of all in the dataset results in the prediction error being reduced by about half (0.28). Since this method yeilds a lower prediction error rate compared to the previous logistic regression model, it can be considered as a method for the final analysis. 
+
+
+LDA & QDA
+# LDA/QDA was not included in the analysis at all since the distributions of the predictors are not considered normal. The predictor here is also categorical which LDA/QDA does not perform well with. Also there is far too much collinearity amongst the response and predictor variables which can decrease predictive power of LDA & QDA. 
+
+KNN
+```{r}
+library(class)
+# Running KNN 1 through 10 to determine best K
+KNN.error <- function(Train, Test, k=1){
+set.seed(1)
+pred.class=knn(Train, Test, Train_Class, k=k)
+mean(Test_Class != pred.class)}
+KNN.error(Train, Test)
+KNN.errors <- data.frame()
+
+for(i in 1:10){
+  KNN.errors[i,1] <- i
+  KNN.errors[i,2] <- round(KNN.error(Train, Test, k=i), digits=3)
+  names(KNN.errors) <- c("K", "Error")
+}
+KNN.errors
+
+
+
+
+# Running 10-fold CV on KNN 
+CV.errors <- function(CVdata, k, m){
+  M <- m
+  n <- nrow(CVdata)
+  k_values=1:k 
+  
+  cv_error_df <- data.frame()
+  
+  set.seed(3124)
+  for(m in 1:M){
+    CVdata <-CVdata[sample(nrow(CVdata)),]
+    folds <- cut(seq(1,n),breaks=M,labels=FALSE)
+    testIndexes <- which(folds==m,arr.ind=TRUE)
+    cv_tr <- CVdata[-testIndexes, ]
+    cv_tst <- CVdata[testIndexes, ]
+
+    
+    for(i in k_values){
+        K <- i
+        cv_error_df[i, m] <- KNN.error(Train, Test, K)}}
+  
+  rownames(cv_error_df) <- c(paste0("k=", k_values))
+  names(cv_error_df) <- paste("fold", seq(1:m))
+  cv_error_df$"CV error" <- rowMeans(cv_error_df)
+  round(cv_error_df, digits=3)}
+
+knn = CV.errors(df, k=10, m=10)
+knn = knn[4,11]
+```
+# According to the table above, k=4 results in the lowest prediction error. So we can choose that as the best k to use for the KNN method. 
+
+Single Classification tree pruned adequately.
+# I began with a single classification tree but pruned back using cv.tree
+```{r, echo= FALSE}
+install.packages("tree")
+library(tree)
+##Running a regular classification tree on the training data
+mytree = tree(as.factor(V280) ~ .,data=Train, method="gini") 
+
+summary(mytree)
+## Doing Cross Validation to prune back the tree
+mytree.cv = cv.tree(mytree,FUN=prune.misclass,K=10) 
+plot(dev~size,data=as.data.frame(mytree.cv[1:3]),type="b")
+points(x=mytree.cv$size[which.min(mytree.cv$dev)], y=min(mytree.cv$dev),col="red",pch=19)
+
+##Chose the size of the tree by using the entire training set to refit the tree
+final.tree = prune.tree(mytree,best=mytree.cv$size[mytree.cv$dev==min(mytree.cv$dev)])
+plot(final.tree)
+text(final.tree,pretty=3,digits=3)
+
+##Predict the misclassification error rate on the test data
+mypredict.class=predict(final.tree,newdata=Test, type="class")
+tmp.class.tree <- table(mypredict.class,Test$V280)
+tmp.class.tree
+
+misclass.class.tree <- 1-sum(diag(tmp.class.tree)/sum(tmp.class.tree))
+misclass.class.tree
+```
+
+Random Forest and Bagged Tree
+```{r, echo=FALSE}
+require(tree)
+require(randomForest)
+require(gbm)
+require(gam)
+
+train.ind=sample(1:nrow(df), size=ceiling(nrow(df)/2), replace=FALSE)
+train_tree <- df[train.ind,]
+test_tree <- df[-train.ind,]
+
+##Bagged tree on training data (i.e. all predictors)
+bagged.tree <- function(x) {randomForest(V280~.,data=df,subset=train.ind,mtry=ncol(df),ntree=x,importance=TRUE)}
+
+##Plot Variable Importance
+varImpPlot(bagged.tree(500),main = "Bagged Tree")
+
+#Random Forest, choosing m=4
+rf.tree <- function(x) {randomForest(V280~.,data=df,subset=train.ind,mtry=4,ntree=x,importance=TRUE)}
+##Plot Variable Importance
+varImpPlot(rf.tree(500),main = "RF")
+
+
+##Predicting misclassification error rate on the test data for both Bagged Tree and Random Forest. Arbitrarily will use 500 trees. 
+mypredict.bagg=predict(bagged.tree(500), df[-train.ind,], type="class")
+tmp.bagg.tree <- table(mypredict.bagg,df[-train.ind,]$V280)
+
+
+##Bagged misclassification rate:
+misclass.bagg.tree <- 1-sum(diag(tmp.bagg.tree)/sum(tmp.bagg.tree))
+misclass.bagg.tree
+
+mypredict.rf=predict(rf.tree(500), df[-train.ind,], type="class")
+tmp.rf.tree <- table(mypredict.bagg,df[-train.ind,]$V280)
+
+
+##Random Forest misclassification rate:
+misclass.rf.tree <- 1-sum(diag(tmp.rf.tree)/sum(tmp.rf.tree))
+misclass.rf.tree
+```
+# This analysis yielded prediction errors of 0.99 which definitely indicates that they should not be included in the analysis.
+
+Gradient Boosted Tree
+# I chose the Gradient Boosted Tree method over the other because it build trees one at a time, where each new tree helps to correct errors made by previously trained tree. Meaning that it is supposed to give better predictions than other tree based methods. I also chose to do depth  = 1 because it is generally more effective than depth = 2. 
+```{r, echo= FALSE}
+library(xgboost)
+library(dplyr)
+
+library(Matrix)
+
+##need to exclude missing
+train.new <- na.omit(Train)
+test.new <- na.omit(Test)
+
+covariates_matrix = sparse.model.matrix(V280 ~ ., data = train.new)[,-1]
+output_vector = train.new[, 'V280'] == 1
+
+covariates_test_matrix = sparse.model.matrix(V280 ~ ., data = test.new)[,-1]
+output_test_vector = test.new[, 'V280'] == 1
+
+##Create grid of parameters to try 
+xgb_grid = expand.grid(
+  eta = c(0.1, 0.01, 0.001, 0.0001),
+  max_depth = c(1,2)
+)
+
+for(i in 1:nrow(xgb_grid)){
+assign(paste0("xgb_params.", i), list(
+  objective = "binary:logistic",                                               
+  eta = xgb_grid[i,1],                                                                  
+  max.depth = xgb_grid[i,2],                                                               
+  eval_metric = "error"                                                          
+))}
+
+param.list <- list(xgb_params.1, xgb_params.2, xgb_params.3, xgb_params.4, xgb_params.5, xgb_params.6,xgb_params.7,xgb_params.8)
+
+set.seed(12345)
+best.cv.error <- data.frame()
+for(i in 1:nrow(xgb_grid)){
+xgb_cv = xgb.cv(params = param.list[[i]],
+                  data = covariates_matrix,
+                  label = output_vector,
+                  nrounds = 500, 
+                  nfold = 5,                                                  
+                  prediction = TRUE,                                          
+                  showsd = TRUE,                                              
+                  stratified = TRUE,                                          
+                  verbose = TRUE
+)
+
+Eval.cv <- xgb_cv$evaluation_log
+best.cv.error[i,1] <- min(Eval.cv$test_error_mean)}
+
+rownames(best.cv.error) <- c("eta=0.1, depth=1", "eta=0.01, depth=1", "eta=0.001, depth=1", "eta=0.0001, depth=1", "eta=0.1, depth=2", "eta=0.01, depth=2", "eta=0.001, depth=2", "eta=0.0001, depth=2")
+
+best.cv.error$eta <- rep(c("0.1", "0.01", "0.001", "0.0001"),2)
+eta.1 <- best.cv.error[which.min(best.cv.error[1:4,"V1"]),]$eta
+
+## Final gradient boosted models (depth=1) with these eta parameters.
+
+xgb_params_1 = list(
+  objective = "binary:logistic",                            # binary classification
+  eta = eta.1,                                              # learning rate
+  max.depth = 1,                                            # max tree depth
+  eval_metric = "error"                                     # evaluation metric
+)
+
+
+# fit the model with the arbitrary parameters specified above
+xgb_1 <- function(x) {xgboost(data = covariates_matrix,
+                label = output_vector,
+                params = xgb_params_1,
+                nrounds = x,                                                
+                verbose = TRUE)}
+
+
+##Prediction with 500 trees
+pred.out.depth.1 <- ifelse(predict(xgb_1(500), covariates_test_matrix) >0.5, "TRUE", "FALSE")
+misclass.gbm.1.tree <- mean(pred.out.depth.1 != output_test_vector)
+grad.boosted= misclass.gbm.1.tree
+grad.boosted
+```
+
+Best Subset Selection
+```{r, eval=FALSE}
+library('bestglm')
+set.seed(1322421)
+bestAIC <- bestglm(Xy=df, 
+                   family=binomial, IC="BIC", 
+                   method="exhaustive", TopModels = 10)
+
+bestAIC$BestModels
+## getting test error with best model
+pred.class <- predict(bestAIC$BestModel, Test, type="response")
+pred.class <- ifelse(pred.class >0.50, "presence", "absence")
+BSS.miss <- mean(Test$y != pred.class)
+print(BSS.miss)
+```
+# (Ran into an error on this method)
+
+Elastic Net regression
+# Here I chose to only do Elastic Net Regression for the Model Selection method because it is best to use when we have highly correlated variables which we do in this dataset. Also since Elastic Net is a hybrid method that incorporates Lasso and Ridge, it tends to outperform them. 
+```{r}
+x=model.matrix(V280~.,Train)
+y=Train$V280
+
+newx=model.matrix(V280~.,Test)
+newy=Test$V280
+
+require('glmnet')
+
+set.seed(12345)
+foldid=sample(1:10,size=length(y),replace=TRUE) ##creating cross validation folds
+grid =10^seq(10,-2,length =100) ##defining range of lambda values
+
+##Run cross validation to choose lambda for alpha= 1, 0.5, and 0
+cv1=cv.glmnet(x,y, family="binomial",lambda=grid,foldid=foldid,alpha=1)
+cv.5=cv.glmnet(x,y, family="binomial", lambda=grid,foldid=foldid,alpha=.5)
+cv0=cv.glmnet(x,y,family="binomial", lambda=grid,foldid=foldid,alpha=0)
+
+plot(cv1,main="LASSO")
+plot(cv0,main="Ridge")
+plot(cv.5,main="Elastic Net alpha=0.5")
+
+# getting the range of log(lambda) and Binomial Deviance first before ploting - to define the x-axis and y-axis limits
+xlims = range(c(log(cv1$lambda), log(cv0$lambda), log(cv.5$lambda)))
+ylims = range(c( cv1$cvm, cv0$cvm, cv.5$cvm ))
+plot(log(cv1$lambda),cv1$cvm,pch=19,col="red",xlab="log(Lambda)",ylab=cv1$name)
+points(log(cv0$lambda),cv0$cvm,pch=19,col="blue")
+points(log(cv.5$lambda),cv.5$cvm,pch=19,col="grey")
+legend("bottomright",legend=c("alpha=1","alpha=.5","alpha=0"),pch=19,col=c("red","grey","blue"))
+
+
+##Choose lambda 1 se for each
+lambda.chosen.cv1 = cv1$lambda.1se
+lambda.chosen.cv.5 = cv.5$lambda.1se
+lambda.chosen.cv0 = cv0$lambda.1se
+
+
+##Get misclassification rate on test data for each
+cv1.final = glmnet(x,y, family="binomial", lambda = lambda.chosen.cv1,alpha=1)
+pred.class <- predict(cv1.final, newx, type="response")
+pred.class <- ifelse(pred.class >0.50, 1, 0)
+Elast.alpha1.miss <- mean(newy != pred.class)
+print(Elast.alpha1.miss)
+
+cv.5.final = glmnet(x,y, family="binomial", lambda = lambda.chosen.cv.5,alpha=0.5)
+pred.class <- predict(cv.5.final, newx, type="response")
+pred.class <- ifelse(pred.class >0.50, 1, 0)
+Elast.alpha.0.5.miss <- mean(newy != pred.class)
+print(Elast.alpha.0.5.miss)
+
+
+cv0.final = glmnet(x,y, family="binomial", lambda = lambda.chosen.cv0,alpha=0)
+pred.class <- predict(cv0.final, newx, type="response")
+pred.class <- ifelse(pred.class >0.50, 1, 0)
+Elast.alpha.0.miss <- mean(newy != pred.class)
+print(Elast.alpha.0.miss)
+
+
+##Now get the coefficients for the model using the full data and lambda chosen for alpha=1, 0.5, and 0
+
+##Redefine x and y for full data
+fullx=model.matrix(V280~.,df)
+fully=df$V280
+
+cv1.full = glmnet(fullx,fully, family="binomial", lambda = lambda.chosen.cv1,alpha=1)
+
+
+cv.5.full = glmnet(fullx,fully,family="binomial", lambda = lambda.chosen.cv.5,alpha=0.5)
+
+
+cv0.full = glmnet(fullx,fully,family="binomial", lambda = lambda.chosen.cv0,alpha=0)
+
+```
+
+# It seems as though the method that works best is Elastic Net with alpha=0.5. This model with the chosen lambda from cross validation will be the final model:
+Table of Methods and Error Rates
+```{r}
+library('pander')
+
+Miss.rates <- data.frame(Method=c("General Logistic Regression", "Logistic Regression (Pick Best)", "KNN","Single Classification Tree","Gradient Boosted Tree","Elastic Net (alpha=1)", "Elastic Net (alpha=0.5)", "Elastic Net (alpha=0)"), Error=round(c(Log.Reg1, Log.Reg2,misclass.class.tree, knn ,grad.boosted,Elast.alpha1.miss, Elast.alpha.0.5.miss, Elast.alpha.0.miss), digits=3))
+
+pander(Miss.rates, style="simple")
+```
+According to the study, the VF15 algorithm achieved 68% accuracy, meaning that it got a prediction error of about 0.32. With the exception of the general logistic regression model all methods performed above resulted in greater accuracy. However, the gradient boosted tree method resulted in the lowest prediction error compared to all methods so according to this analysis, it is the best to use for this problem. 
