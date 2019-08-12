@@ -1,0 +1,622 @@
+---
+title: "Biostatistics2_finalproject_final"
+author: "Ji-eun Park"
+date: "4/13/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+install.packages("sos")
+library(sos)
+library(tidyverse)
+library(ggplot2)
+library(data.table)
+library(lmtest)
+library(sandwich)
+library(magrittr)
+install.packages("officer")
+library(officer)
+install.packages("docxtools")
+library(docxtools)
+install.packages("docxtractr")
+library(docxtractr)
+install.packages("tableone")
+library(tableone)
+install.packages("qwraps2")
+library(qwraps2)
+install.packages("pROC")
+library(pROC)
+```
+
+```{r}
+#loading the raw data
+data <- read.csv('~/Documents/Cornell/Course Work/Spring 2018 Courses/Biostatistics II/Final Project/rhc.csv')
+str(data)
+# Check NA values for each column
+# sapply(data,function(x) sum(is.na(x)))
+
+data$cat2 <- as.character(data$cat2)
+
+# Change NA values of secondary disease to "none"
+data$cat2 <- ifelse(is.na(data$cat2),"none",data$cat2)
+data$cat2 <- as.factor(data$cat2)
+
+
+#no of comorbid illnesses
+data$no_comorbid <- data$cardiohx + data$chfhx + data$dementhx + data$psychhx + data$chrpulhx + data$renalhx + data$liverhx + data$gibledhx + data$malighx + data$immunhx + data$transhx + data$amihx 
+
+#selecting variables only mentioned in Table 1 but not adl as most values are missing
+data <- data %>%
+  select(-c(X,cat2,adld3p,sadmdte,dschdte,dthdte,lstctdte,t3d30,dth30,ptid,urin1))
+
+#renaming columns
+colnames(data) <- c("primary_disease_cat","cancer","death","cardio_com",   "heartfailure_com","dementia_com","psychiatric_com","pulmonary_com","renal_com","Cirrhosis_com","GIbleed_com","malign_com","immune_com","transfer_com","myocardio_com","age","sex",         "education","survivalProb","DASI","APACHEscore","glasgow","bloodPressure","wbc","heartRate","respRate","temperature","PaO2FIO2ratio","albumin","hematocrit","bilirubin",       "creatinine","sodium","potassium","PaCo2","PH","rhc","weight", "DNR","medicalInsurance","respDiag","cardioDiag","neuroDiag","gastroDiag","renalDiag","metaDiag","hemaDiag","sepsisDiag","traumaDiag","orthoDiag","race","income","no_comorbid")
+
+data$cardio_com <- as.factor(data$cardio_com)
+data$heartfailure_com <- as.factor(data$heartfailure_com)
+data$dementia_com <- as.factor(data$dementia_com)
+data$psychiatric_com <- as.factor(data$psychiatric_com)
+data$pulmonary_com <- as.factor(data$pulmonary_com)
+data$renal_com <- as.factor(data$renal_com)
+data$Cirrhosis_com <- as.factor(data$Cirrhosis_com)
+data$GIbleed_com <- as.factor(data$GIbleed_com)
+data$malign_com <- as.factor(data$malign_com)
+data$immune_com <- as.factor(data$immune_com)
+data$transfer_com <- as.factor(data$transfer_com)
+data$myocardio_com <- as.factor(data$myocardio_com)
+
+#creating age group
+setDT(data)[age <50, agegroup := "<50"]
+data[age >=50 & age <60, agegroup := "50 to <60"]
+data[age >=60 & age <70, agegroup := "60 to <70"]
+data[age >=70 & age <80, agegroup := "70 to <80"]
+data[age >=80, agegroup := ">=80"]
+
+data$agegroup <- as.factor(data$agegroup)
+
+#creating disease category
+setDT(data)[primary_disease_cat=="ARF", primary_dis_cat := "ARF"]
+data[primary_disease_cat=="MOSF w/Malignancy" | primary_disease_cat=="MOSF w/Sepsis", primary_dis_cat := "MOSF"]
+data[primary_disease_cat=="CHF", primary_dis_cat := "CHF"]
+data[primary_disease_cat=="Cirrhosis" |primary_disease_cat=="Colon Cancer" |primary_disease_cat=="Coma" |primary_disease_cat=="COPD" |primary_disease_cat=="Lung Cancer", primary_dis_cat := "Other"]
+
+data$primary_dis_cat <- as.factor(data$primary_dis_cat)
+
+#removing age and primary_disease
+data = subset(data, select = -c(age,primary_disease_cat))
+
+# Check NA values for each column
+# sapply(data,function(x) sum(is.na(x)))
+
+data$death <- as.factor(ifelse(data$death == "Yes", 1, 0))
+```
+
+```{r}
+#creating the first half of table1
+dat1 <- data %>%
+  filter(rhc=="RHC")
+
+dat2 <- data %>%
+  filter(rhc=="No RHC")
+
+func <- function(x,X) {
+  x_quo <- enquo(x)
+  
+  a <- dat1 %>%
+    group_by(!! x_quo) %>%
+    summarise(n=length(!! x_quo))
+  
+  b <- dat2 %>%
+    group_by(!! x_quo) %>%
+    summarise(n=length(!! x_quo))
+  
+  t1 <- data.frame(cbind(a$n, b$n))
+  colnames(t1) <- c("a","b")
+  t1$a <- as.numeric(as.character(t1$a))
+  t1$b <- as.numeric(as.character(t1$b))
+  t1$RHC <-  paste0(format(t1$a),"(",format(round(t1$a/2184*100,0)),"%)")
+  t1$NoRHC <- paste0(format(t1$b),"(",format(round(t1$b/3551*100,0)),"%)")
+  
+  roundp <- function(p.val) {
+    if(p.val < 0.001) p.txt <- "p<0.001"
+    else if(p.val < 0.01) p.txt <- paste(format(p.val, digits=2))
+    else p.txt <- paste(format(p.val, digits=3))
+    p.txt
+  }
+  
+  chisq <- function(x) {
+    roundp(chisq.test(x,data$rhc)$`p.val`)
+  }
+  
+  t1 = subset(t1, select = c("NoRHC","RHC"))
+  t1 <- rbind("pval"=NA,t1)
+  t1[1,3] <- chisq(X)
+  t1
+} 
+```
+
+```{r}
+t1_1 <- func(heartfailure_com,data$heartfailure_com)
+t1_2 <-func(dementia_com,data$dementia_com)
+t1_3 <-func(psychiatric_com,data$psychiatric_com)
+t1_4 <-func(pulmonary_com,data$pulmonary_com)  
+t1_5 <-func(renal_com,data$renal_com)   
+t1_6 <-func(Cirrhosis_com,data$Cirrhosis_com)    
+t1_7 <-func(GIbleed_com,data$GIbleed_com)   
+t1_8 <-func(malign_com,data$malign_com)      
+t1_9 <-func(immune_com,data$immune_com)      
+t1_10 <-func(transfer_com,data$transfer_com)     
+t1_11 <-func(myocardio_com,data$myocardio_com)
+
+rownames(t1_1) <- c("Heart Failure","No","Yes")
+rownames(t1_2) <- c("Dementia","No","Yes")
+rownames(t1_3) <- c("Psychiatric disease","No","Yes")
+rownames(t1_4) <- c("Pulmonary disease","No","Yes")
+rownames(t1_5) <- c("Renal disease","No","Yes")
+rownames(t1_6) <- c("Cirrhosis disease","No","Yes")
+rownames(t1_7) <- c("GI Bleeding","No","Yes")
+rownames(t1_8) <- c("Malignant tumor","No","Yes")
+rownames(t1_9) <- c("Immuno disease","No","Yes")
+rownames(t1_10) <- c("Transfer from other hospital","No","Yes")
+rownames(t1_11) <- c("Myocardial Infarction","No","Yes")
+
+
+df <- rbind(t1_1,t1_2,t1_3,t1_4,t1_5,t1_6,t1_7,t1_8,t1_9,t1_10,t1_11)
+df[,1] <- ifelse(is.na(df[,1]),"",df[,1])
+df[,2] <- ifelse(is.na(df[,2]),"",df[,2])
+df[,3] <- ifelse(is.na(df[,3]),"",df[,3])
+
+colnames(df)<-c("RHC (%)", "No RHC (%)","p-value")
+knitr::kable(df, align = c('c'),caption= "Descriptive Analysis (Comorbid Illness)")
+
+```
+
+\newpage
+
+```{r}
+t2_1 <-func(respDiag,data$respDiag)
+t2_2 <-func(cardioDiag,data$cardioDiag)
+t2_3 <-func(neuroDiag,data$neuroDiag)       
+t2_4 <-func(gastroDiag,data$gastroDiag)      
+t2_5 <-func(renalDiag,data$renalDiag)       
+t2_6 <-func(metaDiag,data$metaDiag)       
+t2_7 <-func(hemaDiag,data$hemaDiag)         
+t2_8 <-func(sepsisDiag,data$sepsisDiag)
+t2_9 <-func(traumaDiag,data$traumaDiag)       
+t2_10 <-func(orthoDiag,data$orthoDiag) 
+
+rownames(t2_1) <- c("Respiraotry Diagnosis","No","Yes")
+rownames(t2_2) <- c("Cardiovascular Diagnosis","No","Yes")
+rownames(t2_3) <- c("Neurological Diagnosis","No","Yes")
+rownames(t2_4) <- c("Gastrointestinal Diagnosis","No","Yes")
+rownames(t2_5) <- c("Renal Diagnosis","No","Yes")
+rownames(t2_6) <- c("Metabolic Diagnosis","No","Yes")
+rownames(t2_7) <- c("Hematological Diagnosi","No","Yes")
+rownames(t2_8) <- c("Sepsis Diagnosis","No","Yes")
+rownames(t2_9) <- c("Trauma Diagnosis","No","Yes")
+rownames(t2_10) <- c("Orthological Diagnosis","No","Yes")
+
+df2 <- rbind(t2_1,t2_2,t2_3,t2_4,t2_5,t2_6,t2_7,t2_8,t2_9,t2_10)
+
+df2[,1] <- ifelse(is.na(df2[,1]),"",df2[,1])
+df2[,2] <- ifelse(is.na(df2[,2]),"",df2[,2])
+df2[,3] <- ifelse(is.na(df2[,3]),"",df2[,3])
+
+colnames(df2)<-c("RHC (%)", "No RHC (%)","p-value")
+knitr::kable(df2, align = c('c'),caption= "Descriptive Analysis (Diagnosed Illness)")
+```
+
+\newpage
+
+```{r}
+
+t3_1 <-func(agegroup,data$agegroup)
+t3_2 <-func(sex,data$sex)
+t3_3 <-func(race,data$race)
+t3_4 <-func(income,data$income)
+t3_5 <-func(medicalInsurance,data$medicalInsurance)
+t3_6 <-func(primary_dis_cat,data$primary_dis_cat)
+t3_7 <-func(cancer,data$cancer)
+t3_8 <-func(DNR,data$DNR)
+
+
+rownames(t3_1) <- c("Age Group",levels(data$agegroup))
+rownames(t3_2) <- c("Sex",levels(data$sex))
+rownames(t3_3) <- c("Race",levels(data$race))
+rownames(t3_4) <- c("Income",levels(data$income))
+rownames(t3_5) <- c("Medical Insurance",levels(data$medicalInsurance))
+rownames(t3_6) <- c("Primary Disease",levels(data$primary_dis_cat))
+rownames(t3_7) <- c("Cancer",levels(data$cancer))
+rownames(t3_8) <- c("DNR","No","Yes")
+
+df3 <- rbind(t3_1,t3_2,t3_3,t3_4,t3_5,t3_6,t3_7,t3_8)
+df3[,1] <- ifelse(is.na(df3[,1]),"",df3[,1])
+df3[,2] <- ifelse(is.na(df3[,2]),"",df3[,2])
+df3[,3] <- ifelse(is.na(df3[,3]),"",df3[,3])
+
+
+colnames(df3)<-c("RHC (%)", "No RHC (%)","pval")
+
+knitr::kable(df3, align = "c",caption= "Descriptive Analysis (Demographics)")
+```
+
+\newpage
+
+```{r}
+dat1 <- data %>%
+  filter(rhc=="RHC")
+dat2 <- data %>%
+  filter(rhc=="No RHC")
+library(gmodels)
+
+pround <- function(p.val) {
+    if(p.val < 0.001) p.txt <- "p<0.001"
+    else if(p.val < 0.01) p.txt <- paste(format(p.val, digits=2))
+    else p.txt <- paste(format(p.val, digits=3))
+    p.txt
+}
+  
+cont <- function(x,y){
+  x_meanci <- paste0(round(mean(x),3)," (",round(ci(x)[2],3),",",round(ci(x)[3],3),")")
+  y_meanci <- paste0(round(mean(y),3)," (",round(ci(y)[2],3),",",round(ci(y)[3],3),")")
+  p <- pround(t.test(x,y)$`p.val`)
+  cbind(x_meanci,y_meanci,p)
+}
+
+c1 <- cont(dat1$APACHEscore,dat2$APACHEscore)
+c2 <- cont(dat1$survivalProb,dat2$survivalProb)
+c3 <- cont(dat1$no_comorbid,dat2$no_comorbid)
+c4 <- cont(dat1$DASI,dat2$DASI)
+c5 <- cont(dat1$temperature,dat2$temperature)
+c6 <- cont(dat1$heartRate,dat2$heartRate)
+c7 <- cont(dat1$bloodPressure,dat2$bloodPressure)
+c8 <- cont(dat1$glasgow,dat2$glasgow)
+c9 <- cont(dat1$respRate,dat2$respRate)
+c10 <- cont(dat1$wbc,dat2$wbc)
+c11 <- cont(dat1$PaO2FIO2ratio,dat2$PaO2FIO2ratio)
+c12 <- cont(dat1$PaCo2,dat2$PaCo2)
+c13 <- cont(dat1$PH,dat2$PH)
+c14 <- cont(dat1$creatinine,dat2$creatinine)
+c15 <- cont(dat1$albumin,dat2$albumin)
+
+t <- rbind(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15)
+colnames(t) <- c("No RHC (N=3351)","RHC (N=2184)","pvalue")
+rownames(t) <- c("APCHE score","Survival Probability","No.Comorbidity","DASI","Temperature","Heart Rate","Blood Pressure","Glosgow","Respiratory Rate","WBC","PaO2/FIO2","PaCO2","PH","Creatinine","Albumin")
+knitr::kable(t,align=c('c','c','c'),caption="Descriptive Analysis(Continuous Variable)")
+
+```
+
+\newpage
+
+# Question 2
+# Model to predict whether a patient will receive RHC as a function of all pre-RHC variables
+
+```{r}
+fit <- glm(rhc ~ agegroup + sex + education + race + income + weight + primary_dis_cat + cancer + cardio_com + heartfailure_com + dementia_com + psychiatric_com + pulmonary_com + renal_com + Cirrhosis_com + GIbleed_com + malign_com + immune_com + transfer_com + myocardio_com + DASI + APACHEscore + glasgow + bloodPressure + wbc + heartRate + respRate + temperature + PaO2FIO2ratio + albumin + hematocrit + bilirubin + creatinine + sodium + potassium + PaCo2 + PH + DNR + medicalInsurance + respDiag + cardioDiag + neuroDiag + gastroDiag + renalDiag + metaDiag + hemaDiag + sepsisDiag + traumaDiag + orthoDiag, data=data, family="binomial")
+
+
+# summary(fit)
+```
+
+
+```{r}
+## Final model for the treatment (RHC) only including significant 
+
+fit_2 <- glm(rhc ~ agegroup + education + weight + primary_dis_cat + cancer + dementia_com
+ + psychiatric_com + transfer_com + APACHEscore + bloodPressure + heartRate + respRate + PaO2FIO2ratio + hematocrit + sodium + potassium + PaCo2 + PH + DNR + medicalInsurance + respDiag + cardioDiag + neuroDiag + gastroDiag + renalDiag + hemaDiag + sepsisDiag + traumaDiag,data=data,family="binomial")
+
+# Compare between two models
+
+n <- nrow(data)
+set.seed(123)
+train<- sample(n, n*0.5)
+
+dtrain<- data[train,]
+dtest<- data[-train,]
+
+pred1test <- predict(fit, newdata = dtest, type = 'response')
+pred2test <- predict(fit_2, newdata = dtest, type = 'response')
+
+CE_test1<--(mean(as.numeric(dtest$death) * log(pred1test) + (1-as.numeric(dtest$death)) * log(1 - pred1test)))
+CE_test2<--(mean(as.numeric(dtest$death) * log(pred2test) + (1-as.numeric(dtest$death)) * log(1 - pred2test)))
+
+t <- cbind(CE_test1, CE_test2)
+knitr::kable(t,caption = "Cross Entropy for Treatment Model Comparison")
+```
+
+\newpage
+
+```{r}
+dfp <- function(p.val){
+  format.pval(pv = p.val, eps = 0.001, nsmall = 3)
+}
+
+Coefficient <- round(summary(fit_2)$coefficients[,1], 3)
+p.value <- dfp(round(summary(fit_2)$coefficients[,4], 3))
+
+x <- cbind(Coefficient, p.value)
+knitr::kable(x, align = "c",caption= "Analysis result (use of RHC)")
+```
+
+
+\newpage
+
+```{r, fig.align='center'}
+library(pROC)
+
+roc1test<-roc(dtest$death~pred1test)
+roc2test<-roc(dtest$death~pred2test) 
+
+p1 <- plot(roc1test, print.thres=TRUE,print.auc=TRUE, col=1, main="ROC of model 1 test")
+
+p2 <- plot(roc2test,print.thres=TRUE, print.auc=TRUE, col=4, main="ROC of model 2 test")
+
+```
+
+# Question 3
+# Model to predict whether a patient will die in the first 180 days after hospitalization,based on all pre-treatment covariates
+\newpage
+
+```{r, fig.align="center"}
+#Deciding between models
+fit1.1 <- glm(death ~ rhc+ agegroup + sex + education + race + income + weight + primary_dis_cat + 
+cancer + cardio_com + heartfailure_com + dementia_com + psychiatric_com + pulmonary_com + renal_com + 
+Cirrhosis_com + GIbleed_com + malign_com + immune_com + transfer_com + myocardio_com + DASI + APACHEscore + 
+glasgow + bloodPressure + wbc + heartRate + respRate + temperature + PaO2FIO2ratio + albumin + hematocrit + 
+bilirubin + creatinine + sodium + potassium + PaCo2 + PH + DNR + medicalInsurance + respDiag + cardioDiag + 
+neuroDiag + gastroDiag + renalDiag + metaDiag + hemaDiag + sepsisDiag + traumaDiag + orthoDiag, data=data, family="binomial")
+
+
+
+
+fit1 <- glm(death ~ rhc + agegroup + sex + education + income + weight + primary_dis_cat + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag, data=data, family="binomial")
+
+
+
+
+fit2 <-glm(death ~ rhc + agegroup + sex + education + income + weight + primary_dis_cat + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:primary_dis_cat + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag, data=data,
+             family="binomial")
+
+
+Coefficient2 <- round(summary(fit2)$coefficients[,1], 3)
+p.value2 <- dfp(round(summary(fit2)$coefficients[,4], 3))
+
+x2 <- cbind(Coefficient2, p.value2)
+knitr::kable(x2, align = "c",caption= "Analysis result (Death)")
+```
+
+\newpage
+
+```{r, fig.align='center'}
+# Divide the dataset into training and testing set to compare the two models
+
+n <- nrow(data)
+set.seed(123)
+train <- sample(n, n*0.5)
+
+dtrain<- data[train,]
+dtest<- data[-train,]
+
+pred1.1test <- predict(fit1.1, newdata = dtest, type = 'response')
+pred1test <- predict(fit1, newdata = dtest, type = 'response')
+pred2test <- predict(fit2, newdata = dtest, type = 'response')
+
+CE_test1.1 <- -(mean(as.numeric(dtest$death) * log(pred1.1test) + (1-as.numeric(dtest$death)) * log(1 - pred1.1test)))
+
+CE_test1 <- -(mean(as.numeric(dtest$death) * log(pred1test) + (1-as.numeric(dtest$death)) * log(1 - pred1test)))
+
+CE_test2 <- -(mean(as.numeric(dtest$death) * log(pred2test) + (1-as.numeric(dtest$death)) * log(1 - pred2test)))
+
+cbind(CE_test1.1, CE_test1, CE_test2)
+
+?roc
+roc1.1test <- roc(dtest$death~pred1.1test)
+roc1test <- roc(dtest$death~pred1test) 
+roc2test <- roc(dtest$death~pred2test) 
+
+plot(roc1.1test, print.thres=TRUE,print.auc=TRUE, col=1, main="ROC of model 1.1 test")
+
+plot(roc1test,print.thres=TRUE, print.auc=TRUE, col=4, main="ROC of model 1.2 test")
+
+plot(roc2test,print.thres=TRUE, print.auc=TRUE, col=3, main="ROC of model 2 test")
+```
+
+\newpage
+
+```{r}
+
+#Part 2
+# marginal risk ratio
+library(boot)
+library(car)
+data_rhc1 <- as.data.frame(cbind(data[,-35], rhc=rep("RHC",nrow(data))))
+data_rhc0 <- as.data.frame(cbind(data[,-35], rhc=rep("No RHC",nrow(data))))
+data_rhc1$rhc <- as.factor(data_rhc1$rhc)
+data_rhc0$rhc <- as.factor(data_rhc0$rhc)
+p1 <- predict(fit2, newdata = data_rhc1, type = 'response')
+p0 <- predict(fit2, newdata = data_rhc0, type= "response")
+rr <- round(mean(p1) / mean(p0), 3)
+or <- round((mean(p1)/(1-mean(p1))) / (mean(p0)/(1-mean(p0))), 3)
+ate <- round(mean(p1) - mean(p0), 3)
+
+
+# marginal risk ratio and ci
+logit.bootstrap.rr <- function(formula, data, indices) {
+  
+  d <- data[indices, ]
+  fit2 <- glm(formula, data = d, family = "binomial")
+  
+  d1 <- as.data.frame(cbind(d[,-35], rhc=rep("RHC",nrow(d))))
+  d2 <- as.data.frame(cbind(d[,-35], rhc=rep("No RHC",nrow(d))))
+  d1$rhc <- as.factor(d1$rhc)
+  d2$rhc <- as.factor(d2$rhc)
+  
+  p1 <- predict(fit2, newdata = d1, type = 'response')
+  p0 <- predict(fit2, newdata = d2, type="response")
+  rr <- mean(p1) / mean(p0)
+  return(rr)
+}
+
+logit.bootstrap.or <- function(formula, data, indices) {
+  
+  d <- data[indices, ]
+  fit2 <- glm(formula, data = d, family = "binomial")
+  
+  d1 <- as.data.frame(cbind(d[,-35], rhc=rep("RHC",nrow(d))))
+  d2 <- as.data.frame(cbind(d[,-35], rhc=rep("No RHC",nrow(d))))
+  d1$rhc <- as.factor(d1$rhc)
+  d2$rhc <- as.factor(d2$rhc)
+  
+  p1 <- predict(fit2, newdata = d1, type = 'response')
+  p0 <- predict(fit2, newdata = d2, type="response")
+  or <- (mean(p1)/(1-mean(p1))) / (mean(p0)/(1-mean(p0)))
+  return(or)
+}
+
+logit.bootstrap.ate <- function(formula, data, indices) {
+  
+  d <- data[indices, ]
+  fit2 <- glm(formula, data = d, family = "binomial")
+  
+  d1 <- as.data.frame(cbind(d[,-35], rhc=rep("RHC",nrow(d))))
+  d2 <- as.data.frame(cbind(d[,-35], rhc=rep("No RHC",nrow(d))))
+  d1$rhc <- as.factor(d1$rhc)
+  d2$rhc <- as.factor(d2$rhc)
+  
+  p1 <- predict(fit2, newdata = d1, type = 'response')
+  p0 <- predict(fit2, newdata = d2, type="response")
+  ate <- mean(p1) - mean(p0)
+  return(ate)
+}
+
+
+set.seed(1234)
+
+results_rr <- boot(data=data,statistic=logit.bootstrap.rr, R=100,formula=death ~ rhc + agegroup + sex + education + income + weight + primary_dis_cat + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:primary_dis_cat + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag)
+
+
+results_or <- boot(data=data,statistic=logit.bootstrap.or, R=100,formula=death ~ rhc + agegroup + sex + education + income + weight + primary_dis_cat + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:primary_dis_cat + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag)
+             
+results_ate <- boot(data=data,statistic=logit.bootstrap.ate, R=100,formula=death ~ rhc + agegroup + sex + education + income + weight + primary_dis_cat + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:primary_dis_cat + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag)
+
+ci_rr <- round(confint(results_rr,type="perc"),3)
+ci_or <- round(confint(results_or,type="perc"),3)
+ci_ate <- round(confint(results_ate,type="perc"),3)
+
+## tables
+x <- rbind(rr, or, ate)
+y <- rbind(ci_rr, ci_or, ci_ate)
+z <- cbind(x,y)
+colnames(z) <- c("Value", "Lower CI Bound", "Upper CI Bound")
+rownames(z) <- c("RR", "MOR", "ATE")
+knitr::kable(z,caption= "Marginal Causal Effects")
+
+```
+
+\newpage
+
+```{r}
+data2 <- data
+data2$agegroup <- as.numeric(data2$agegroup)
+data2$sex <- as.numeric(data2$sex)
+data2$income<-as.numeric(data2$income)
+data2$primary_dis_cat<-as.numeric(data2$primary_dis_cat)
+data2$cancer<-as.numeric(data2$cancer)
+data2$cardio_com<-as.numeric(data2$cardio_com)
+data2$heartfailure_com<-as.numeric(data2$heartfailure_com)
+data2$dementia_com<-as.numeric(data2$dementia_com)
+data2$malign_com<-as.numeric(data2$malign_com)
+data2$immune_com<-as.numeric(data2$immune_com)
+data2$DNR<-as.numeric(data2$DNR)
+data2$medicalInsurance<-as.numeric(data2$medicalInsurance)
+data2$cardioDiag<-as.numeric(data2$cardioDiag)
+data2$neuroDiag<-as.numeric(data2$neuroDiag)
+data2$gastroDiag<-as.numeric(data2$gastroDiag)
+data2$hemaDiag<-as.numeric(data2$hemaDiag)
+
+
+cor <- round(exp(summary(fit2)$coefficients[2,1] + summary(fit2)$coefficients[26,1]*data2$agegroup + summary(fit2)$coefficients[27,1]*data2$sex + summary(fit2)$coefficients[28,1]*data2$income + summary(fit2)$coefficients[29,1]*data2$weight + summary(fit2)$coefficients[30,1]*data2$primary_dis_cat + summary(fit2)$coefficients[31,1]*data2$cancer + summary(fit2)$coefficients[32,1]*data2$cardio_com + summary(fit2)$coefficients[33,1]*data2$heartfailure_com + summary(fit2)$coefficients[34,1]*data2$dementia_com + summary(fit2)$coefficients[35,1]*data2$malign_com + summary(fit2)$coefficients[36,1]*data2$immune_com + summary(fit2)$coefficients[37,1]*data2$DASI + summary(fit2)$coefficients[38,1]*data2$APACHEscore + summary(fit2)$coefficients[39,1]*data2$glasgow + summary(fit2)$coefficients[40,1]*data2$temperature + summary(fit2)$coefficients[41,1]*data2$hematocrit + summary(fit2)$coefficients[42,1]*data2$bilirubin + summary(fit2)$coefficients[43,1]*data2$DNR + summary(fit2)$coefficients[44,1]*data2$medicalInsurance + summary(fit2)$coefficients[45,1]*data2$cardioDiag + summary(fit2)$coefficients[46,1]*data2$neuroDiag + summary(fit2)$coefficients[47,1]*data2$gastroDiag+summary(fit2)$coefficients[48,1]*data2$hemaDiag ), 3)
+
+```
+
+# Question 4
+```{r}
+
+data_ARF <- subset(data, primary_dis_cat == "ARF")
+data_MOSF <- subset(data, primary_dis_cat == "MOSF")
+data_CHF <- subset(data, primary_dis_cat == "CHF")
+data_Other <- subset(data, primary_dis_cat == "Other")
+
+
+fit_arf <-glm(death ~ rhc + agegroup + sex + education + income + weight + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag, data=data_ARF, family="binomial")
+
+fit_mosf <-glm(death ~ rhc + agegroup + sex + education + income + weight + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag, data=data_MOSF, family="binomial")
+
+fit_chf <-glm(death ~ rhc + agegroup + sex + education + income + weight + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag, data=data_CHF, family="binomial")
+
+fit_other <-glm(death ~ rhc + agegroup + sex + education + income + weight + cancer + cardio_com + psychiatric_com + transfer_com + bloodPressure + heartRate + respRate + PaO2FIO2ratio + sodium + potassium + PaCo2 + PH + respDiag + renalDiag + sepsisDiag + traumaDiag +
+heartfailure_com + dementia_com + malign_com + immune_com +  DASI + APACHEscore + glasgow + temperature + 
+hematocrit + bilirubin + DNR + medicalInsurance + cardioDiag + neuroDiag + gastroDiag +  hemaDiag + rhc:agegroup + rhc:sex + rhc:education + rhc:income + rhc:weight + rhc:cancer + rhc:cardio_com + rhc:psychiatric_com + rhc:transfer_com + rhc:bloodPressure + rhc:heartRate + rhc:respRate + rhc:PaO2FIO2ratio + rhc:sodium + rhc:potassium + rhc:PaCo2 + rhc:PH + rhc:respDiag + rhc:renalDiag + rhc:sepsisDiag + rhc:traumaDiag +
+rhc:heartfailure_com + rhc:dementia_com + rhc:malign_com + rhc:immune_com +  rhc:DASI + rhc:APACHEscore + rhc:glasgow + rhc:temperature + 
+rhc:hematocrit + rhc:bilirubin + rhc:DNR + rhc:medicalInsurance + rhc:cardioDiag + rhc:neuroDiag + rhc:gastroDiag +  rhc:hemaDiag, data=data_Other, family="binomial")
+
+rr<- function(data, formula)  
+              {data_rhc1 <- as.data.frame(cbind(data[,-35], rhc=rep("RHC",nrow(data))))
+              data_rhc0 <- as.data.frame(cbind(data[,-35], rhc=rep("No RHC",nrow(data))))
+              data_rhc1$rhc <- as.factor(data_rhc1$rhc)
+              data_rhc0$rhc <- as.factor(data_rhc0$rhc)
+              p1 <- predict(formula, newdata = data_rhc1, type = 'response')
+              p0 <- predict(formula, newdata = data_rhc0, type= "response")
+              rr <- round(mean(p1) / mean(p0), 3)
+              ate <- round(mean(p1) - mean(p0), 3) 
+              or <- round((mean(p1)/(1-mean(p1))) / (mean(p0)/(1-mean(p0))), 3)
+              return(cbind(rr,ate,or))}
+arf_rhc<- rr(data_ARF,fit_arf)
+mosf_rhc<- rr(data_MOSF,fit_mosf)
+chf_rhc<- rr(data_CHF,fit_chf)
+other_rhc<- rr(data_Other,fit_other)
+all_rhc<-rr(data,fit2)
+
+
+df2 <- rbind(all_rhc,arf_rhc,mosf_rhc,chf_rhc,other_rhc)
+rownames(df2)<-c("All","ARF","MOSF","CHF","Other")
+colnames(df2)<-c("Risk Ratio","Average Treatment Effect","Marginal Odds Ratio")
+knitr::kable(df2, align = "c",caption= "Marginal Causal Effects(Stratified)")
+```
+
+
+
+
+
+
