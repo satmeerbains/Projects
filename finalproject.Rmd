@@ -1,6 +1,6 @@
 ---
 title: "Biostatistics2_finalproject_final"
-author: "Ji-eun Park"
+author: "Satmeer Bains"
 date: "4/13/2018"
 output: pdf_document
 ---
