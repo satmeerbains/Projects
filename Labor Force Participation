@@ -13,7 +13,7 @@ library(tidyverse)
 library(caret)
 library(glmnet)
 library(ROCR)
-data_B = read.csv("~/Documents/Career/Exams/Hello Fresh/data_B.csv")
+data_B = read.csv("~/Documents/data_B.csv")
 ```
 
 # Data Preparation
