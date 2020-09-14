@@ -1,0 +1,176 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Loading
+```{r}
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(ROCR)
+data_B = read.csv("~/Documents/Career/Exams/Hello Fresh/data_B.csv")
+```
+
+# Data Preparation
+```{r}
+data_B[c(1,18)] = lapply(data_B[c(1,18)], factor) 
+data_B[is.na(data_B)] = 0
+```
+
+# Splitting data into Train and Test sets
+```{r}
+set.seed(123)
+split = sample(seq_len(nrow(data_B)), size = floor(0.8 * nrow(data_B)))
+train = data_B[split, ]
+test = data_B[-split, ]
+
+# Train
+
+#convert training data to matrix format
+x_train = model.matrix(inlf~.,train)[,-1]
+#converting class to numerical variable
+y_train = as.matrix(train[, 1])
+
+# Test
+
+#converting test data to matrix format
+x_test = model.matrix(inlf~.,test)[,-1]
+#convert class to numerical variable
+y_test = as.matrix(test[, 1])
+
+
+```
+
+1. Ridge Regression
+# Choosing lambda using Cross-Validation
+```{r}
+cv_ridge = cv.glmnet(x_train, y_train, alpha = 0, type.measure = "class", nfolds = 10, family="binomial")
+# Plots
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar="lambda", label=TRUE)
+
+# Minimum lambda
+print(cv_ridge$lambda.min)
+# Coefficients
+coef(cv_ridge)
+```
+
+# Fitting the model with training data
+```{r}
+# Alpha is set to 0 according to the assumptions of Ridge Regression
+ridge_model = glmnet(x_train, y_train, lambda = cv_ridge$lambda.min, alpha = 0, family="binomial")
+
+# Coefficients
+coef(ridge_model)
+```
+
+# Predicting Labor Force Participation with test data 
+```{r}
+prediction_ridge <- predict(ridge_model, x_test, type="class", s=cv_ridge$lambda.min)
+```
+
+# Determining Model Evaluation using the mean error rate (fraction of incorrect prediction)
+```{r}
+ridge_mer = table(y_test, prediction_ridge)
+# mean error rate (fraction of incorrect predictions) 
+a = 1 - sum(diag(prop.table(ridge_mer)))
+```
+# The mean error rate of prediction using Ridge regression is 0.0397351. Meaning that for every 100 predictions of labor force participation, 3.9 can be considered incorrect. 
+
+Lasso Regression
+# Choosing lambda using Cross-Validation
+```{r}
+cv_lasso = cv.glmnet(x_train, y_train, alpha = 1, type.measure = "class", nfolds = 10, family="binomial")
+# Plots
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar="lambda", label=TRUE)
+
+# Minimum lamba
+print(cv_lasso$lambda.min)
+
+# Coefficients
+coef(cv_lasso)
+
+
+```
+
+# Fitting the model using training data
+```{r}
+lasso_model = glmnet(x_train, y_train, lambda = cv_lasso$lambda.min, alpha = 1, family="binomial")
+
+# Coefficients
+coef(lasso_model)
+```
+
+# Predicting Labor Force Participation with test data 
+```{r}
+prediction_lasso <- predict(lasso_model, x_test, type="class", s=cv_lasso$lambda.min)
+```
+
+
+
+# Determining mean error rate (fraction of incorrect labels)
+```{r}
+mer_lasso = table(y_test, prediction_lasso)
+b = 1 - sum(diag(prop.table(mer_lasso)))
+
+```
+# The mean error rate of prediction using Lasso regression is 0.006622517. Meaning that for every 100 predictions of labor force participation, 0.6 can be considered incorrect. 
+
+Elastic Net Regression
+# Since Elastic net is a combination of ridge and lasso regression it has two tuning parameters (alpha and lambda) while lasso and ridge regression only have 1. So a grid must be formed to investigate different models with different combinations of alpha and lambda.
+```{r}
+grid = expand.grid(.alpha=seq(0,1,by=.5),.lambda=seq(0,0.2,by=.1))
+```
+
+# Determining alpha and lambda
+```{r}
+# Alpha
+enet.train = train(inlf~.,train,method="glmnet",tuneGrid=grid)
+enet.train
+
+# Finding a more precise lambda using cross validation to ensure accurate results
+set.seed(317)
+enet.cv = cv.glmnet(x_train,y_train, alpha=1, type.measure = "class", nfolds = 10, family="binomial")
+plot(enet.cv)
+enet.cv$lambda.min
+
+```
+
+# Building the model
+```{r}
+enet  = glmnet(x_train, y_train, family = "binomial",alpha = 1,lambda = enet.cv$lambda.min)
+
+# Coefficients
+enet.coef = coef(enet,lambda=0,alpha=1,exact=T)
+enet.coef
+```
+
+# Predicting Labor Force Participation with test data 
+```{r}
+prediction_enet = predict(enet, x_test, type = "class", alpha=1, lamba = enet.cv$lambda.min)
+```
+
+# Determining mean error rate (fraction of incorrect labels)
+```{r}
+mer_enet = table(y_test, prediction_enet)
+c = 1 - sum(diag(prop.table(mer_enet)))
+```
+
+# Model Evaluation 
+```{r}
+d = c("Ridge", "Lasso", "Elastic Net")
+e = c(a[1], b[1], c[1])
+# Table 1
+as.table(setNames(e, d))
+
+```
+# Typically, penalized regression models are evaluated based on mean squared error. However, due to the classification dataset in this case, the method of evaluating the effectiveness in predicting the labor force participation was mean error rate (Table 1). It can can be interpreted as the fraction of labor force participation predictions that are incorrectly labeled compared to actual values of the quantity being predicted. Meaning the ideal model results in the lowest the value of mean error rate.
+
+# In this case, the model that shows the lowest mean error rate is Lasso regression so it can be considered as the most effective model at predicting labor force participation compared to Ridge regression and Elastic Net regression. 
+
