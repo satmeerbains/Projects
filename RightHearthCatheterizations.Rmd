@@ -1,5 +1,5 @@
 ---
-title: "Biostatistics2_finalproject_final"
+title: "RightHearthCatheterizations.Rmd"
 author: "Satmeer Bains"
 output: pdf_document
 ---
@@ -30,7 +30,7 @@ library(pROC)
 
 ```{r}
 #loading the raw data
-data <- read.csv('~/Documents/Cornell/Course Work/Spring 2018 Courses/Biostatistics II/Final Project/rhc.csv')
+data <- read.csv('RightHearthCatheterizations.csv')
 str(data)
 # Check NA values for each column
 # sapply(data,function(x) sum(is.na(x)))
