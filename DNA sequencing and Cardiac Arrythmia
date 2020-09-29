@@ -9,7 +9,7 @@ output: word_document
 knitr::opts_chunk$set(echo = TRUE)
 install.packages("tidyverse")
 library(tidyverse)
-df <- read.table("~/Documents/Cornell/Course Work/Summer 2018 Courses/Data Mining/Final Project/arrhythmia.data", sep = ",")
+df <- read.table("arrhythmia.data", sep = ",")
 
 ```
 
